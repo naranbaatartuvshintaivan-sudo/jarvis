@@ -1,11 +1,12 @@
 """
 clap_wake — 👏👏 хоёр удаа алга ташихад JARVIS сэрнэ.
 
-Wake word (Hey Jarvis) горимтой зэрэгцэж ажиллана: Jarvis унтаж байхад
-хоёр удаа алга ташвал сэрнэ. Сэрүүн үед юу ч хийхгүй.
+Хоёр удаа алга ташихад:
+  • Jarvis-ийн цонх дэлгэцийн урд гарч ирнэ (minimize хийсэн ч)
+  • Mic mute-тэй бол нээнэ
+  • Wake word горимд унтаж байвал сэрнэ
 
 Байршуулах:  Documents\\Mark-L\\plugins\\clap_wake.py
-Шаардлага:   🎛 CONTROLS → WAKE WORD: ON  (унтах/сэрэх горим идэвхтэй байх)
 Jarvis-д:    "turn off clap wake" / "clap sensitivity high" / "clap wake status"
 
 Яаж ажилладаг вэ:
@@ -26,7 +27,8 @@ import time
 PLUGIN = {
     "name": "clap_wake",
     "description": (
-        "Control clap-to-wake: two claps wake JARVIS while it is asleep. "
+        "Control clap-to-wake: two claps bring the JARVIS window to the front, "
+        "unmute the mic and wake it if asleep. "
         "action 'on' / 'off' / 'status', or 'sensitivity' with level low|medium|high. "
         "Use for 'turn off clap wake', 'clap sensitivity high', 'is clap wake on'."
     ),
@@ -129,7 +131,8 @@ class ClapDetector:
 #  Jarvis-тэй холбох хэсэг
 # ══════════════════════════════════════════════════════════════════════════════
 
-_state = {"enabled": True, "level": "medium", "jarvis": None, "error": "", "started": False}
+_state = {"enabled": True, "level": "medium", "jarvis": None, "error": "",
+          "started": False, "bridge": None}
 _detector = ClapDetector()
 _lock = threading.Lock()
 
@@ -149,6 +152,90 @@ def _log(msg: str) -> None:
     print(f"[Clap] {msg}")
 
 
+def _bring_to_front(win) -> None:
+    """Jarvis-ийн цонхыг дэлгэцийн урд гаргана (Qt main thread дээр дуудагдана)."""
+    try:
+        if win.isMinimized() or not win.isVisible():
+            win.showNormal()
+        win.raise_()
+        win.activateWindow()
+    except Exception:
+        pass
+    # Windows өөр програм идэвхтэй үед цонхыг урд гаргахыг хориглодог —
+    # foreground thread-тэй түр холбогдож зөвшөөрөл авна.
+    try:
+        import ctypes
+        u32, k32 = ctypes.windll.user32, ctypes.windll.kernel32
+        hwnd = int(win.winId())
+        fg = u32.GetForegroundWindow()
+        fg_tid = u32.GetWindowThreadProcessId(fg, None)
+        me = k32.GetCurrentThreadId()
+        u32.AttachThreadInput(me, fg_tid, True)
+        u32.ShowWindow(hwnd, 9)              # SW_RESTORE
+        u32.SetForegroundWindow(hwnd)
+        u32.BringWindowToTop(hwnd)
+        u32.AttachThreadInput(me, fg_tid, False)
+    except Exception:
+        pass
+
+
+def _on_double_clap() -> None:
+    """Qt main thread дээр ажиллана: цонх урд гаргах + mic нээх + сэрээх."""
+    j = _state["jarvis"]
+    if j is None:
+        return
+    ui = getattr(j, "ui", None)
+    done = []
+    win = getattr(ui, "_win", None)
+    if win is not None:
+        _bring_to_front(win)
+        done.append("window up")
+    try:
+        if ui is not None and ui.muted:
+            ui.muted = False
+            done.append("mic on")
+    except Exception:
+        pass
+    if getattr(j, "_wake_enabled", False) and not getattr(j, "_awake", True):
+        try:
+            j.wake(reason="double clap")
+            done.append("awake")
+        except Exception as e:
+            _log(f"wake failed: {e}")
+    _log("👏👏 → " + (", ".join(done) or "nothing to do"))
+    try:
+        ui.write_log("SYS: 👏👏 Clap — " + (", ".join(done) or "ready") + ".")
+    except Exception:
+        pass
+
+
+def _make_bridge():
+    """Mic thread-ээс Qt main thread руу дохио дамжуулах QObject."""
+    from PyQt6.QtCore import QCoreApplication, QObject, pyqtSignal, pyqtSlot
+
+    class _Bridge(QObject):
+        clapped = pyqtSignal()
+
+        def __init__(self):
+            super().__init__()
+            self.clapped.connect(self._handle)
+
+        @pyqtSlot()          # жинхэнэ slot → main thread дээр дуудагдана
+        def _handle(self):
+            _on_double_clap()
+
+    app = QCoreApplication.instance()
+    if app is None:
+        return None
+    b = _Bridge()
+    b.moveToThread(app.thread())
+    # Холболтыг main thread-д шилжүүлсний дараа дахин хийнэ (Queued)
+    from PyQt6.QtCore import Qt
+    b.clapped.disconnect()
+    b.clapped.connect(b._handle, Qt.ConnectionType.QueuedConnection)
+    return b
+
+
 def _worker() -> None:
     import numpy as np
     import sounddevice as sd
@@ -156,12 +243,18 @@ def _worker() -> None:
     # Jarvis бүрэн ачаалагдахыг хүлээнэ
     for _ in range(120):
         jarvis = _find_jarvis()
-        if jarvis is not None:
+        if jarvis is not None and getattr(jarvis, "ui", None) is not None:
             _state["jarvis"] = jarvis
             break
         time.sleep(1.0)
     else:
         _state["error"] = "JarvisLive олдсонгүй"
+        _log(_state["error"])
+        return
+
+    _state["bridge"] = _make_bridge()
+    if _state["bridge"] is None:
+        _state["error"] = "Qt app олдсонгүй"
         _log(_state["error"])
         return
 
@@ -178,18 +271,14 @@ def _worker() -> None:
         if not _state["enabled"]:
             return
         j = _state["jarvis"]
-        # Зөвхөн унтаж байхад сонсоно — сэрүүн үед CPU зарцуулахгүй
-        if not (getattr(j, "_wake_enabled", False) and not getattr(j, "_awake", True)):
+        # Jarvis өөрөө ярьж байх үед алгасна (өөрийнх нь дуу)
+        if getattr(j, "_is_speaking", False):
             return
         block = indata[:, 0].astype(np.float32) / 32768.0
         with _lock:
             fired = _detector.feed(block)
         if fired:
-            _log("👏👏 detected — waking JARVIS")
-            try:
-                j.wake(reason="double clap")
-            except Exception as e:
-                _log(f"wake failed: {e}")
+            _state["bridge"].clapped.emit()
 
     while True:
         try:
@@ -221,7 +310,7 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
 
     if action == "on":
         _state["enabled"] = True
-        return "Clap wake is on, sir. Two claps will wake me when I'm asleep."
+        return "Clap wake is on, sir. Two claps bring me up."
     if action == "off":
         _state["enabled"] = False
         return "Clap wake is off, sir."
@@ -234,12 +323,8 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
         _state["level"] = level
         return f"Clap sensitivity set to {level}, sir."
 
-    j = _state["jarvis"]
-    wake_mode = bool(j and getattr(j, "_wake_enabled", False))
     parts = [f"Clap wake is {'on' if _state['enabled'] else 'off'}",
              f"sensitivity {_state['level']}"]
-    if not wake_mode:
-        parts.append("but wake word mode is off, so I never sleep — turn WAKE WORD on in Controls")
     if _state["error"]:
-        parts.append(f"microphone error: {_state['error']}")
+        parts.append(f"error: {_state['error']}")
     return ", ".join(parts) + ", sir."

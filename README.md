@@ -10,7 +10,7 @@
 |---|---|
 | `install_jarvis.bat` | Git + Python 3.12 (winget), Mark-L clone, `.venv`, dependencies, Desktop launcher — нэг товшилтоор |
 | `plugins/ask_claude.py` | Jarvis → **Claude Code** bridge. *"Hey Jarvis, ask Claude to …"* гэхэд `claude -p`-ээр төсөл дотор ажил хийлгэж, хариуг уншина |
-| `plugins/clap_wake.py` | 👏👏 **Clap to wake** — унтаж байхад хоёр удаа алга ташвал Jarvis сэрнэ |
+| `plugins/clap_wake.py` | 👏👏 **Clap to summon** — хоёр удаа алга ташвал Jarvis-ийн цонх урд гарч, mic нээгдэж, унтаж байвал сэрнэ |
 | `plugins/holo_desk.py` | **Gesture holo desk** — webcam + MediaPipe hand tracking. Файлууд голограф карт болж, чимхээд PRINT / OPEN бүс рүү чирнэ |
 
 ## Суулгах
@@ -36,7 +36,8 @@
 - Алдаа гарвал: `%USERPROFILE%\.jarvis_holo\pip.log`
 
 ### clap_wake
-- 🎛 CONTROLS → **WAKE WORD: ON** байх ёстой (унтах/сэрэх горим). "Hey Jarvis" ч зэрэг ажиллана.
-- 👏👏 хоёр ташилт 0.12–0.8 сек зайтай → сэрнэ. Ганц, гурван ташилт, яриа, хөгжмөөр сэрэхгүй.
+- 👏👏 хоёр ташилт 0.12–0.8 сек зайтай → цонх урд гарна (minimize хийсэн ч), mute-тэй mic нээгдэнэ, wake word горимд унтаж байвал сэрнэ.
+- Ямар ч горимд ажиллана — WAKE WORD асаалттай байх шаардлагагүй.
+- Ганц, гурван ташилт, яриа, хөгжмөөр сэрэхгүй.
 - Jarvis-д: *"clap sensitivity high"* / *"turn off clap wake"* / *"clap wake status"*
 - Core кодыг өөрчлөхгүй — өөрийн mic stream (Windows shared mode) ашиглана.
